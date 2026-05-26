@@ -10,30 +10,26 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: 安装 Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: 安装依赖
+      - name: Install Dependencies
         run: |
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: 打包 EXE
+      - name: Build EXE
         run: |
           pyinstaller --noconfirm --onefile --windowed `
             --icon=logo.ico `
             --name=SteamRegister `
             --add-data "logo.png;." `
-            --version-file=version.txt `
             main.py
 
-      - name: 上传 EXE
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: SteamRegister-Windows
           path: dist/SteamRegister.exe
