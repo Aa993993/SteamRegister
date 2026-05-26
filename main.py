@@ -74,8 +74,21 @@ def generate_password() -> str:
 
 
 _DESKTOP = str(Path.home() / "Desktop")
-_RESULT_FILE = _DESKTOP + "/Steam注册成功账号.txt"
+_RESULT_DIR = _DESKTOP + "/Steam注册记录"
+_RESULT_FILE = _RESULT_DIR + "/Steam注册成功账号.txt"
 _file_lock = threading.Lock()
+_current_batch_dir = None
+
+
+def set_batch_dir() -> str:
+    """创建当前批次的时间戳文件夹，返回路径"""
+    global _RESULT_FILE, _current_batch_dir
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    batch_dir = Path(_RESULT_DIR) / ts
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    _current_batch_dir = str(batch_dir)
+    _RESULT_FILE = str(batch_dir / "注册结果.txt")
+    return _current_batch_dir
 
 
 def save_result(data: dict):
@@ -560,10 +573,11 @@ class SteamRegisterGUI:
 
     def _open_result_file(self):
         import subprocess, sys, os
+        folder = _current_batch_dir if _current_batch_dir else os.path.dirname(_RESULT_FILE)
         if sys.platform == "win32":
-            os.startfile(os.path.dirname(_RESULT_FILE))
+            os.startfile(folder)
         else:
-            subprocess.run(["open", "-R", _RESULT_FILE], check=False)
+            subprocess.run(["open", folder], check=False)
 
     def _set_running(self, running: bool):
         if running:
@@ -671,6 +685,11 @@ class SteamRegisterGUI:
     def _run_batch(self, pairs, email_passwords, imap_server, imap_port, country, threads, base_url=""):
         results = {"success": [], "failed_keys": []}
         results_lock = threading.Lock()
+
+        # 创建当前批次的时间戳文件夹
+        batch_dir = set_batch_dir()
+        self.root.after(0, lambda: self._log(f"📁 新建批次文件夹: {batch_dir}"))
+        self.root.after(0, lambda: self._log(f"📝 结果文件: {_RESULT_FILE}"))
 
         if threads <= 1:
             for i, (key, email) in enumerate(pairs, 1):
