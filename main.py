@@ -27,13 +27,10 @@ from PIL import Image, ImageTk
 import requests
 
 # ============================================================
-# 配置
+# 配置（默认值，GUI 里可修改）
 # ============================================================
 
-BASE_URL = "http://101.33.205.205"
-API_QUERY = BASE_URL + "/index.php/UserApiController/web_query"
-API_SUBMIT = BASE_URL + "/index.php/UserApiController/web_submit"
-API_STOP = BASE_URL + "/index.php/UserApiController/web_stop"
+DEFAULT_BASE_URL = "http://101.33.205.205"
 
 POLL_INTERVAL = 5
 MAX_RETRY_ON_DUPLICATE = 3
@@ -177,7 +174,8 @@ _manual_link_queue = queue.Queue()  # 手动输入验证链接
 class SteamAutoRegister:
     def __init__(self, card_key: str, email: str, country: str = "CN",
                  email_fetcher: Optional[EmailFetcher] = None,
-                 preset_username: str = "", preset_password: str = ""):
+                 preset_username: str = "", preset_password: str = "",
+                 base_url: str = ""):
         self.card_key = card_key
         self.email = email
         self.country = country
@@ -185,9 +183,13 @@ class SteamAutoRegister:
         self.username = preset_username
         self.password = preset_password
         self._pending_link = None  # 供 GUI 手动填入验证链接
+        self._base_url = base_url or DEFAULT_BASE_URL
+        self._api_query = self._base_url + "/index.php/UserApiController/web_query"
+        self._api_submit = self._base_url + "/index.php/UserApiController/web_submit"
+        self._api_stop = self._base_url + "/index.php/UserApiController/web_stop"
 
     def _query_card(self) -> dict:
-        resp = requests.post(API_QUERY, data={"k": self.card_key}, timeout=15)
+        resp = requests.post(self._api_query, data={"k": self.card_key}, timeout=15)
         return resp.json()
 
     def _submit(self, emailurl: str = "") -> dict:
@@ -200,12 +202,12 @@ class SteamAutoRegister:
         }
         if emailurl:
             data["emailurl"] = emailurl
-        resp = requests.post(API_SUBMIT, data=data, timeout=15)
+        resp = requests.post(self._api_submit, data=data, timeout=15)
         return resp.json()
 
     def _stop(self):
         try:
-            requests.post(API_STOP, data={"k": self.card_key}, timeout=10)
+            requests.post(self._api_stop, data={"k": self.card_key}, timeout=10)
         except Exception:
             pass
 
@@ -379,7 +381,7 @@ class SteamAutoRegister:
 # ============================================================
 
 def process_one_task(key: str, email: str, email_password: str, imap_server: str,
-                      imap_port: int, country: str) -> tuple:
+                      imap_port: int, country: str, base_url: str = "") -> tuple:
     if _stop_event.is_set():
         return (key, email, None)
 
@@ -393,6 +395,7 @@ def process_one_task(key: str, email: str, email_password: str, imap_server: str
     runner = SteamAutoRegister(
         card_key=key, email=email,
         country=country, email_fetcher=fetcher,
+        base_url=base_url,
     )
     try:
         result = runner.run()
@@ -467,10 +470,14 @@ class SteamRegisterGUI:
         ttk.Checkbutton(row2, text="显示", variable=self.show_pwd_var,
                         command=self._toggle_pwd).pack(side=LEFT)
 
-        # 第三行：线程数
+        # 第三行：服务器地址 + 线程数
         row3 = ttk.Frame(cfg)
         row3.pack(fill=X, pady=2)
-        ttk.Label(row3, text="并发线程:", width=12).pack(side=LEFT)
+        ttk.Label(row3, text="服务器地址:", width=12).pack(side=LEFT)
+        self.server_entry = ttk.Entry(row3, width=25)
+        self.server_entry.insert(0, DEFAULT_BASE_URL)
+        self.server_entry.pack(side=LEFT, padx=(0, 15))
+        ttk.Label(row3, text="并发线程:").pack(side=LEFT)
         self.thread_spin = ttk.Spinbox(row3, from_=1, to=20, width=5)
         self.thread_spin.set(1)
         self.thread_spin.pack(side=LEFT)
@@ -579,8 +586,10 @@ class SteamRegisterGUI:
         # 调用 API 停止
         try:
             keys = self._get_active_keys()
+            base_url = self.server_entry.get().strip() or DEFAULT_BASE_URL
+            api_stop = base_url + "/index.php/UserApiController/web_stop"
             for k in keys:
-                requests.post(API_STOP, data={"k": k}, timeout=10)
+                requests.post(api_stop, data={"k": k}, timeout=10)
         except Exception:
             pass
 
@@ -604,6 +613,7 @@ class SteamRegisterGUI:
         imap_pwd = self.pwd_entry.get().strip()
         country = self.country_combo.get().strip()
         threads_str = self.thread_spin.get().strip()
+        base_url = self.server_entry.get().strip() or DEFAULT_BASE_URL
 
         if not raw_emails:
             messagebox.showwarning("提示", "请填写邮箱列表")
@@ -654,11 +664,11 @@ class SteamRegisterGUI:
             imap_port = int(imap_port) if imap_port else 993
         except ValueError:
             imap_port = 993
-        t = threading.Thread(target=self._run_batch, args=(pairs, email_passwords, imap_server, imap_port, country, threads),
+        t = threading.Thread(target=self._run_batch, args=(pairs, email_passwords, imap_server, imap_port, country, threads, base_url),
                              daemon=True)
         t.start()
 
-    def _run_batch(self, pairs, email_passwords, imap_server, imap_port, country, threads):
+    def _run_batch(self, pairs, email_passwords, imap_server, imap_port, country, threads, base_url=""):
         results = {"success": [], "failed_keys": []}
         results_lock = threading.Lock()
 
@@ -670,7 +680,7 @@ class SteamRegisterGUI:
                 log.info("📌 [%d/%d] %s → %s", i, len(pairs), key, email)
                 _, _, result = process_one_task(
                     key, email, email_passwords.get(email, ""),
-                    imap_server, imap_port, country
+                    imap_server, imap_port, country, base_url
                 )
                 if result:
                     with results_lock:
@@ -685,7 +695,7 @@ class SteamRegisterGUI:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futs = {
                     ex.submit(process_one_task, k, e, email_passwords.get(e, ""),
-                              imap_server, imap_port, country): k
+                              imap_server, imap_port, country, base_url): k
                     for k, e in pairs
                 }
                 for fut in as_completed(futs):
